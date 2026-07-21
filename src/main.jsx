@@ -1,6 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {BarChart3,CalendarDays,ChevronDown,CircleHelp,FileText,Grid2X2,LayoutDashboard,Mail,Menu,Paperclip,Plus,Settings,ShieldCheck,Sparkles,Users,X,LogOut} from 'lucide-react';
+import {supabase,supabaseConfigured} from './lib/supabase';
 import './styles.css';
 
 const today=()=>new Date().toISOString().slice(0,10);
@@ -11,33 +12,156 @@ const nav=[['Dashboard',LayoutDashboard],['Outreach',Paperclip],['Analytics',Bar
 function Field({label,children,wide,required}){return <label className={'field '+(wide?'wide':'')}><span>{label}{required&&<b className="required"> *</b>}</span>{children}</label>}
 function Input({value,onChange,placeholder,type='text',required=false}){return <input type={type} value={value??''} onChange={e=>onChange(e.target.value)} placeholder={placeholder} required={required}/>}
 function Select({value,onChange,options}){return <div className="select"><select value={value} onChange={e=>onChange(e.target.value)}>{options.map(x=><option key={x}>{x}</option>)}</select><ChevronDown size={16}/></div>}
-function Section({title,children}){return <div className="section"><h3>{title}</h3>{children}</div>}
 function Notice({message,error}){return message?<div className={'notice '+(error?'error':'')}>{error?'!':'✓'}&nbsp; {message}</div>:null}
 
 function App(){
- const [auth,setAuth]=useState({loading:true,user:null}),[page,setPage]=useState('Outreach'),[type,setType]=useState('Creator'),[form,setForm]=useState(blank()),[entries,setEntries]=useState([]),[settings,setSettings]=useState({theme:'Light',language:'English (US)'}),[notice,setNotice]=useState(''),[noticeError,setNoticeError]=useState(false),[navOpen,setNavOpen]=useState(false);
+ const [auth,setAuth]=useState({loading:true,user:null}),[page,setPage]=useState('Dashboard'),[type,setType]=useState('Creator'),[form,setForm]=useState(blank()),[entries,setEntries]=useState([]),[settings,setSettings]=useState({theme:'Light',language:'English (US)'}),[notice,setNotice]=useState(''),[noticeError,setNoticeError]=useState(false),[navOpen,setNavOpen]=useState(false);
  const notify=(message,error=false)=>{setNotice(message);setNoticeError(error);window.setTimeout(()=>setNotice(''),4000)};
- const api=async(path,options={})=>{const response=await fetch(path,{credentials:'include',headers:{'content-type':'application/json',...(options.headers||{})},...options});let data={};try{data=await response.json()}catch{}if(!response.ok)throw new Error(data.error||'Something went wrong');return data};
- useEffect(()=>{api('/api/auth/session').then(data=>setAuth({loading:false,user:data.user||null})).catch(()=>setAuth({loading:false,user:null}))},[]);
+ const api=async(path,options={})=>{const headers={'content-type':'application/json',...(options.headers||{})};if(supabaseConfigured&&supabase){try{const {data}=await supabase.auth.getSession();if(data.session?.access_token)headers.authorization=`Bearer ${data.session.access_token}`}catch{}}const response=await fetch(path,{credentials:'include',headers,...options});let data={};try{data=await response.json()}catch{}if(!response.ok)throw new Error(data.error||'Something went wrong');return data};
+
+ useEffect(()=>{
+  let active=true;
+  const initAuth=async()=>{
+   if(supabaseConfigured&&supabase){
+    try{
+     const {data}=await supabase.auth.getSession();
+     if(active&&data.session?.user){
+      setAuth({loading:false,user:toAppUser(data.session.user)});
+      return;
+     }
+    }catch{}
+   }
+   try{
+    const res=await fetch('/api/auth/session',{credentials:'include'});
+    const data=await res.json();
+    if(active&&data.authenticated&&data.user){
+     setAuth({loading:false,user:data.user});
+     return;
+    }
+   }catch{}
+   if(active)setAuth({loading:false,user:null});
+  };
+  initAuth();
+
+  let subscription;
+  if(supabaseConfigured&&supabase){
+   try{
+    const res=supabase.auth.onAuthStateChange((_event,session)=>{
+     if(active)setAuth({loading:false,user:toAppUser(session?.user)});
+    });
+    subscription=res.data?.subscription;
+   }catch{}
+  }
+  return ()=>{active=false;subscription?.unsubscribe()};
+ },[]);
+
  useEffect(()=>{if(!auth.user)return;Promise.all([api('/api/settings'),api('/api/entries')]).then(([prefs,rows])=>{setSettings(prefs.settings);setEntries(rows.entries||[])}).catch(error=>notify(error.message,true))},[auth.user]);
  useEffect(()=>{document.documentElement.dataset.theme=settings.theme.toLowerCase()},[settings.theme]);
  if(auth.loading)return <div className="loading-screen">Loading Creonnect…</div>;
  if(!auth.user)return <Auth onAuthenticated={user=>setAuth({loading:false,user})}/>;
  const updateSettings=async(next)=>{setSettings(next);try{const data=await api('/api/settings',{method:'PUT',body:JSON.stringify(next)});setSettings(data.settings);notify('Preferences saved')}catch(error){notify(error.message,true)}};
  const updateProfile=async(next)=>{try{const data=await api('/api/profile',{method:'PUT',body:JSON.stringify(next)});setAuth(current=>({...current,user:data.user}));notify('Profile changes saved')}catch(error){notify(error.message,true)}};
- const submit=async event=>{event.preventDefault();try{const data=await api('/api/entries',{method:'POST',body:JSON.stringify({...form,type})});setEntries(current=>[data.entry,...current]);setForm(blank());notify('Added securely to the team tracker')}catch(error){notify(error.message,true)}};
- const logout=async()=>{await api('/api/auth/logout',{method:'POST'}).catch(()=>{});setAuth({loading:false,user:null})};
+ const submit=async event=>{event.preventDefault();try{const data=await api('/api/entries',{method:'POST',body:JSON.stringify({...form,type})});setEntries(current=>[data.entry,...current]);setForm(blank());if(data.warnings?.length){notify(`Logged locally. Note: ${data.warnings.join('; ')}`,false)}else{notify('Added securely to the team tracker')}}catch(error){notify(error.message,true)}};
+ const logout=async()=>{if(supabaseConfigured&&supabase){try{await supabase.auth.signOut()}catch{}}await fetch('/api/auth/logout',{method:'POST',credentials:'include'}).catch(()=>{});setAuth({loading:false,user:null})};
  const go=name=>{setPage(name);setNavOpen(false)};
- return <div className="shell"><aside className={'sidebar '+(navOpen?'open':'')}><div className="brand"><div className="mark"><Sparkles size={20}/></div><div><b>Creonnect</b><small>Outreach Logger</small></div><button className="close" onClick={()=>setNavOpen(false)}><X/></button></div><nav>{nav.map(([name,Icon])=><button key={name} className={page===name?'active':''} onClick={()=>go(name)}><Icon size={20}/>{name}</button>)}</nav><div className="profile"><div className="avatar">{initials(auth.user.name)}</div><div><b>{auth.user.name}</b><small>{auth.user.email}</small></div><button className="logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div></aside><main><header><button className="menu" onClick={()=>setNavOpen(true)}><Menu/></button><div><p className="eyebrow">{page.toUpperCase()}</p><h1>{page==='Outreach'?'Log new outreach':page}</h1><p className="sub">{page==='Outreach'?'Capture your next conversation while it’s fresh.':page==='Dashboard'?'Overview of your outreach performance':page==='Analytics'?'Track your outreach performance and engagement metrics.':'Manage your account preferences and integrations.'}</p></div>{page==='Dashboard'&&<button className="primary top-add" onClick={()=>go('Outreach')}><Plus size={17}/> New Log</button>}</header><section className="content">{page==='Outreach'?<Outreach type={type} form={form} setForm={setForm} switchType={next=>{setType(next);setForm(blank())}} submit={submit}/>:page==='Dashboard'?<Dashboard entries={entries} onAdd={()=>go('Outreach')}/>:page==='Analytics'?<Analytics entries={entries}/>:<SettingsPage user={auth.user} settings={settings} updateSettings={updateSettings} updateProfile={updateProfile} notify={notify}/>}</section></main><Notice message={notice} error={noticeError}/></div>
+ return <div className={'shell theme-'+settings.theme.toLowerCase()}><aside className={'sidebar '+(navOpen?'open':'')}><div className="brand"><div className="mark"><Sparkles size={20}/></div><div><b>Creonnect</b><small>Outreach Logger</small></div><button className="close" onClick={()=>setNavOpen(false)}><X/></button></div><nav>{nav.map(([name,Icon])=><button key={name} className={page===name?'active':''} onClick={()=>go(name)}><Icon size={20}/>{name}</button>)}</nav><div className="profile"><div className="avatar">{initials(auth.user.name)}</div><div><b>{auth.user.name}</b><small>{auth.user.email}</small></div><button className="logout" title="Sign out" onClick={logout}><LogOut size={16}/></button></div></aside><main><header><button className="menu" onClick={()=>setNavOpen(true)}><Menu/></button><div><p className="eyebrow">{page.toUpperCase()}</p><h1>{page==='Outreach'?'Log new outreach':page}</h1><p className="sub">{page==='Outreach'?'Capture your next conversation while it’s fresh.':page==='Dashboard'?'Overview of your outreach performance':page==='Analytics'?'Track your outreach performance and engagement metrics.':'Manage your account preferences and integrations.'}</p></div>{page==='Dashboard'&&<button className="primary top-add" onClick={()=>go('Outreach')}><Plus size={17}/> New Log</button>}</header><section className="content">{page==='Outreach'?<Outreach type={type} form={form} setForm={setForm} switchType={next=>{setType(next);setForm(blank())}} submit={submit}/>:page==='Dashboard'?<Dashboard entries={entries} onAdd={()=>go('Outreach')}/>:page==='Analytics'?<Analytics entries={entries}/>:<SettingsPage user={auth.user} settings={settings} updateSettings={updateSettings} updateProfile={updateProfile} notify={notify} logout={logout}/>}</section></main><Notice message={notice} error={noticeError}/></div>
 }
+function toAppUser(user){return user?{id:user.id,name:user.user_metadata?.full_name||user.email?.split('@')[0]||'User',email:user.email||''}:null}
 function initials(name){return name.split(' ').filter(Boolean).map(part=>part[0]).join('').slice(0,2).toUpperCase()||'U'}
-function Auth({onAuthenticated}){const [mode,setMode]=useState('login'),[form,setForm]=useState({name:'',email:'',password:''}),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);const update=key=>value=>setForm(current=>({...current,[key]:value}));const submit=async event=>{event.preventDefault();setBusy(true);setMessage('');try{const response=await fetch(`/api/auth/${mode==='login'?'login':'signup'}`,{method:'POST',credentials:'include',headers:{'content-type':'application/json'},body:JSON.stringify(form)});const data=await response.json();if(!response.ok)throw new Error(data.error);onAuthenticated(data.user)}catch(error){setMessage(error.message)}finally{setBusy(false)}};return <div className="auth-screen"><div className="auth-card"><div className="auth-tabs"><button className={mode==='login'?'selected':''} onClick={()=>{setMode('login');setMessage('')}}>Login</button><button className={mode==='signup'?'selected':''} onClick={()=>{setMode('signup');setMessage('')}}>Create Account</button></div><div className="auth-logo"><div className="mark"><ShieldCheck size={22}/></div><h1>Creonnect</h1><p>Outreach Logger</p></div><form onSubmit={submit}>{mode==='signup'&&<Field label="Full name" required><Input value={form.name} onChange={update('name')} placeholder="Your name" required/></Field>}<Field label="Email" required><Input value={form.email} onChange={update('email')} placeholder="name@company.com" type="email" required/></Field><Field label="Password" required><Input value={form.password} onChange={update('password')} placeholder="At least 8 characters" type="password" required/></Field>{mode==='login'&&<button type="button" className="forgot" onClick={()=>setMessage('Contact your administrator to reset access.')}>Forgot Password?</button>}{message&&<div className="auth-error">{message}</div>}<button className="primary auth-submit" disabled={busy}>{busy?'Please wait…':mode==='login'?'Sign In →':'Create Account'}</button></form><p className="auth-footer">{mode==='login'?<>Don't have an account? <button onClick={()=>setMode('signup')}>Sign Up</button></>:<>Already have an account? <button onClick={()=>setMode('login')}>Log In</button></>}</p></div></div>}
+function Auth({onAuthenticated}){
+ const [mode,setMode]=useState('login'),[form,setForm]=useState({name:'',email:'',password:''}),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+ const update=key=>value=>setForm(current=>({...current,[key]:value}));
+ const submit=async event=>{
+  event.preventDefault();
+  setBusy(true);
+  setMessage('');
+  try{
+   let appUser=null;
+   let sbErr=null;
+
+   if(supabaseConfigured&&supabase){
+    try{
+     const result=mode==='login'
+      ?await supabase.auth.signInWithPassword({email:form.email,password:form.password})
+      :await supabase.auth.signUp({email:form.email,password:form.password,options:{data:{full_name:form.name}}});
+     if(result.error){
+      sbErr=result.error;
+     }else if(result.data?.session?.user){
+      appUser=toAppUser(result.data.session.user);
+     }else if(mode==='signup'&&result.data?.user&&!result.data?.session){
+      setMessage('Check your email to confirm your account, then sign in.');
+      setBusy(false);
+      return;
+     }
+    }catch(err){
+     sbErr=err;
+    }
+   }
+
+   if(!appUser){
+    try{
+     const endpoint=mode==='login'?'/api/auth/login':'/api/auth/signup';
+     const res=await fetch(endpoint,{
+      method:'POST',
+      headers:{'content-type':'application/json'},
+      credentials:'include',
+      body:JSON.stringify(form)
+     });
+     let data={};
+     try{data=await res.json()}catch{}
+     if(res.ok&&data.ok&&data.user){
+      appUser=data.user;
+     }else if(data.error){
+      throw new Error(data.error);
+     }else{
+      throw new Error('Server returned an unexpected response');
+     }
+    }catch(serverErr){
+     let msg=serverErr.message||sbErr?.message||'Email or password is incorrect';
+     if(msg.includes('Unexpected token')||msg.includes('is not valid JSON')||msg.toLowerCase().includes('invalid login credentials')||msg.toLowerCase().includes('invalid credentials')){
+      msg='Incorrect email or password. Please check your credentials and try again.';
+     }
+     throw new Error(msg);
+    }
+   }
+
+   if(appUser){
+    onAuthenticated(appUser);
+   }
+  }catch(error){
+   let cleanMsg=error.message||'Authentication failed.';
+   if(cleanMsg.includes('Unexpected token')||cleanMsg.includes('is not valid JSON')){
+    cleanMsg='Incorrect email or password. Please try again.';
+   }
+   setMessage(cleanMsg);
+  }finally{
+   setBusy(false);
+  }
+ };
+
+ return <div className="auth-screen"><div className="auth-card"><div className="auth-tabs"><button className={mode==='login'?'selected':''} onClick={()=>{setMode('login');setMessage('')}}>Login</button><button className={mode==='signup'?'selected':''} onClick={()=>{setMode('signup');setMessage('')}}>Create Account</button></div><div className="auth-logo"><div className="mark"><ShieldCheck size={22}/></div><h1>Creonnect</h1><p>Outreach Logger</p></div><form onSubmit={submit}>{mode==='signup'&&<Field label="Full name" required><Input value={form.name} onChange={update('name')} placeholder="Your name" required/></Field>}<Field label="Email" required><Input value={form.email} onChange={update('email')} placeholder="name@company.com" type="email" required/></Field><Field label="Password" required><Input value={form.password} onChange={update('password')} placeholder="At least 8 characters" type="password" required/></Field>{mode==='login'&&<button type="button" className="forgot" onClick={async()=>{if(supabaseConfigured&&supabase&&form.email){const result=await supabase.auth.resetPasswordForEmail(form.email);setMessage(result.error?.message||'Password reset email sent.')}else setMessage('Enter your email first.')}}>Forgot Password?</button>}{message&&<div className="auth-error">{message}</div>}<button className="primary auth-submit" disabled={busy}>{busy?'Please wait…':mode==='login'?'Sign In →':'Create Account'}</button></form><p className="auth-footer">{mode==='login'?<>Don't have an account? <button onClick={()=>setMode('signup')}>Sign Up</button></>:<>Already have an account? <button onClick={()=>setMode('login')}>Log In</button></>}</p></div></div>;
+}
+
 function Outreach({type,form,setForm,switchType,submit}){const set=key=>value=>setForm(current=>({...current,[key]:value}));const setCountry=value=>set('country')(countries.find(item=>item.code===value)||countries[0]);return <><div className="toggle"><button type="button" className={type==='Creator'?'chosen':''} onClick={()=>switchType('Creator')}><Users size={18}/> Creator</button><button type="button" className={type==='Brand'?'chosen':''} onClick={()=>switchType('Brand')}><Grid2X2 size={18}/> Brand</button></div><form className="card" onSubmit={submit}><div className="intro"><div><p className="eyebrow">{type} OUTREACH</p><h2>{type==='Creator'?'Creator details':'Brand details'}</h2><p>{type==='Creator'?'Creator name and Instagram ID are required.':'All fields are optional. Add what you know.'}</p></div><span className="saved">● Secure form</span></div><Section title="Profile information"><div className="grid"><Field label={type==='Creator'?'Creator name':'Brand / company name'} required={type==='Creator'}><Input value={form.name} onChange={set('name')} placeholder={type==='Creator'?'Enter name':'Enter company name'} required={type==='Creator'}/></Field><Field label={type==='Creator'?'Platform':'Website'}>{type==='Creator'?<Select value={form.platform} onChange={set('platform')} options={opts.platform}/>:<Input value={form.website} onChange={set('website')} placeholder="https://example.com"/>}</Field><Field label={type==='Creator'?'Instagram ID':'Industry / category'} required={type==='Creator'}><Input value={type==='Creator'?form.handle:form.industry} onChange={set(type==='Creator'?'handle':'industry')} placeholder={type==='Creator'?'@username':'e.g. Technology, Fashion'} required={type==='Creator'}/></Field><Field label={type==='Creator'?'Niche / category':'POC name'}><Input value={type==='Creator'?form.niche:form.poc} onChange={set(type==='Creator'?'niche':'poc')} placeholder={type==='Creator'?'e.g. Tech, Beauty':'Enter name'}/></Field><Field label={type==='Creator'?'Follower count':'POC designation'}><Input value={type==='Creator'?form.audience:form.designation} onChange={set(type==='Creator'?'audience':'designation')} placeholder={type==='Creator'?'e.g. 10K':'e.g. Marketing Manager'}/></Field>{type==='Brand'&&<Field label="Deal stage"><Select value={form.stage} onChange={set('stage')} options={opts.stage}/></Field>}</div></Section><Section title="Contact information"><div className="grid"><Field label="Phone number"><div className="phone"><div className="select country-select"><select value={form.country.code} onChange={e=>setCountry(e.target.value)}>{countries.map(country=><option value={country.code} key={country.name}>{country.flag} {country.name} ({country.code})</option>)}</select><ChevronDown size={16}/></div><Input value={form.phone} onChange={set('phone')} placeholder="Phone number" type="tel"/></div></Field><Field label="Email address"><div className="with-icon"><Mail size={15}/><Input value={form.email} onChange={set('email')} placeholder="email@example.com" type="email"/></div></Field></div></Section><Section title="Outreach details"><div className="grid"><Field label="How we connected"><Select value={form.connected} onChange={set('connected')} options={opts.connected}/></Field><Field label="Reached out by"><Input value={form.reachedBy} onChange={set('reachedBy')} placeholder="Your name"/></Field><Field label="Date of outreach"><div className="with-icon"><CalendarDays size={15}/><Input value={form.date} onChange={set('date')} type="date"/></div></Field><Field label="Response status"><Select value={form.response} onChange={set('response')} options={opts.response}/></Field><Field label="Response notes" wide><textarea value={form.responseNotes} onChange={e=>set('responseNotes')(e.target.value)} placeholder="Details of the interaction..."/></Field></div></Section><Section title="Follow-up & next steps"><div className="grid"><Field label="Follow-up needed"><Select value={form.follow} onChange={set('follow')} options={['Yes','No']}/></Field><Field label="Follow-up date"><div className="with-icon"><CalendarDays size={15}/><Input value={form.followDate} onChange={set('followDate')} type="date"/></div></Field><Field label="Follow-up notes" wide><textarea value={form.followNotes} onChange={e=>set('followNotes')(e.target.value)} placeholder="What should you remember?"/></Field><Field label="Next action" wide><Input value={form.nextAction} onChange={set('nextAction')} placeholder="e.g. Send proposal"/></Field><Field label="Remarks" wide><textarea value={form.remarks} onChange={e=>set('remarks')(e.target.value)} placeholder="Additional context..."/></Field></div></Section><div className="footer"><span>Entries are sent through the private server.</span><button className="submit"><Plus size={18}/> Add {type} log</button></div></form></>}
 function Dashboard({entries,onAdd}){const response=entries.length?Math.round(entries.filter(e=>e.response!=='Not Contacted').length/entries.length*100):0;return <><div className="stats"><Stat label="Total Outreach" value={entries.length} note="All logged entries"/><Stat label="Response Rate" value={`${response}%`} note="Based on logged responses"/><Stat label="Converted Leads" value={entries.filter(e=>e.response==='Converted').length} note="Converted entries"/></div><div className="panel"><div className="panel-head"><h2>Recent Activity</h2><button onClick={onAdd}>New log <Plus size={15}/></button></div>{entries.length?<div className="table">{entries.slice(0,8).map((entry,index)=><div className="row" key={entry.id||index}><b>{entry.name||'Unnamed entry'}</b><span>{entry.type}</span><span>{new Date(entry.createdAt).toLocaleDateString()}</span><em>{entry.response}</em></div>)}</div>:<Empty onAdd={onAdd}/>}</div></>}
 function Stat({label,value,note}){return <div className="stat"><span>{label}</span><strong>{value}</strong><small>{note}</small></div>}
-function Analytics({entries}){const count=entries.length;return <div className="analytics"><div className="stats"><Stat label="Total Outreach" value={count} note="All time"/><Stat label="Response Rate" value={count?`${Math.round(entries.filter(e=>e.response!=='Not Contacted').length/count*100)}%`:'0%'} note="With a recorded response"/><Stat label="Follow-ups" value={entries.filter(e=>e.follow==='Yes').length} note="Needs attention"/></div><div className="panel"><h2>Outreach volume</h2><div className="bars">{['Creator','Brand'].map(label=><div key={label}><i style={{height:`${Math.max(8,entries.filter(entry=>entry.type===label).length*18)}px`}}/><span>{label}</span></div>)}</div></div></div>}
+function Analytics({entries}){const count=entries.length,response=count?Math.round(entries.filter(e=>e.response!=='Not Contacted').length/count*100):0,meetings=entries.filter(e=>e.response==='Converted').length;const platforms=['LinkedIn','Email (Direct)','Twitter/X','Instagram','Other'];const platformCounts=platforms.map(label=>entries.filter(e=>(e.platform||e.connected||'').includes(label.replace('Email (Direct)','Email'))).length);return <div className="analytics-page"><div className="analytics-toolbar"><span>Track your outreach performance and engagement metrics.</span><button className="range-button"><CalendarDays size={16}/> Last 30 Days <ChevronDown size={15}/></button></div><div className="stats analytics-stats"><Stat label="Total Outreach" value={count} note="All time"/><Stat label="Response Rate" value={`${response}%`} note="Based on responses"/><Stat label="Meetings Booked" value={meetings} note="Converted entries"/><Stat label="Conversion Rate" value={count?`${Math.round(meetings/count*1000)/10}%`:'0%'} note="Converted / outreach"/></div><div className="analytics-grid"><div className="panel chart-panel"><div className="panel-title"><h2>Outreach Volume</h2><button className="export-button" onClick={()=>downloadCsv(entries)}>Export ↓</button></div><svg className="line-chart" viewBox="0 0 680 280" role="img" aria-label="Outreach volume chart"><path className="grid-line" d="M20 35H660M20 85H660M20 135H660M20 185H660M20 235H660"/><path className="area-line" d="M20 235 C100 160 115 190 150 175 S245 210 285 135 S380 175 430 70 S535 110 660 95 L660 235 L20 235Z"/><path className="main-line" d="M20 235 C100 160 115 190 150 175 S245 210 285 135 S380 175 430 70 S535 110 660 95"/><g className="chart-labels"><text x="20" y="258">Week 1</text><text x="145" y="258">Week 2</text><text x="275" y="258">Week 3</text><text x="410" y="258">Week 4</text><text x="535" y="258">Week 5</text><text x="630" y="258">Week 6</text></g></svg></div><div className="panel response-panel"><h2>Response Status</h2><p>Current pipeline health</p><div className="donut"><span>{response}%<small>response</small></span></div><div className="legend"><span><i className="positive"/>Replied (Positive)</span><span><i className="neutral"/>Replied (No Interest)</span><span><i className="no-response"/>No Response</span><span><i className="bounced"/>Bounced</span></div></div></div><div className="panel platform-panel"><h2>Outreach by Platform</h2><div className="platform-bars">{platforms.map((label,index)=><div key={label}><span>{label}</span><i style={{height:`${Math.max(8,platformCounts[index]*22)}px`}}/></div>)}</div></div></div>}
+function downloadCsv(entries){const header='type,name,platform,email,response,date\n';const rows=entries.map(e=>[e.type,e.name,e.platform||e.website,e.email,e.response,e.date].map(value=>`"${String(value||'').replaceAll('"','""')}"`).join(',')).join('\n');const link=document.createElement('a');link.href=URL.createObjectURL(new Blob([header+rows],{type:'text/csv'}));link.download='creonnect-outreach.csv';link.click();URL.revokeObjectURL(link.href)}
 function Empty({onAdd}){return <div className="empty"><FileText size={30}/><p>No outreach logged yet.</p><button className="primary" onClick={onAdd}><Plus size={16}/> Add your first log</button></div>}
-function SettingsPage({user,settings,updateSettings,updateProfile,notify}){const [tab,setTab]=useState('Profile Settings'),[draft,setDraft]=useState(user);return <div className="settings-page"><div className="settings-layout"><aside className="settings-tabs"><button className={tab==='Profile Settings'?'selected':''} onClick={()=>setTab('Profile Settings')}>Profile Settings</button><button className={tab==='App Preferences'?'selected':''} onClick={()=>setTab('App Preferences')}>App Preferences</button><button className={tab==='Integrations'?'selected':''} onClick={()=>setTab('Integrations')}>Integrations</button></aside><div className="settings-main">{tab==='Profile Settings'&&<SettingsSection title="Profile Settings"><div className="profile-form"><div><div className="profile-photo">{initials(draft.name)}</div><button className="text-button" onClick={()=>notify('Profile pictures are not enabled yet')}>Change Picture</button></div><div className="grid"><Field label="Full name"><Input value={draft.name} onChange={value=>setDraft({...draft,name:value})}/></Field><Field label="Email address"><Input value={draft.email} onChange={value=>setDraft({...draft,email:value})} type="email"/></Field></div></div><div className="settings-actions"><button className="primary" onClick={()=>updateProfile(draft)}>Save Changes</button></div></SettingsSection>}{tab==='App Preferences'&&<SettingsSection title="App Preferences"><div className="preference-row"><div><strong>Theme</strong><small>Select your preferred interface color mode.</small></div><div className="segmented"><button className={settings.theme==='Light'?'selected':''} onClick={()=>updateSettings({...settings,theme:'Light'})}>☼&nbsp; Light</button><button className={settings.theme==='Dark'?'selected':''} onClick={()=>updateSettings({...settings,theme:'Dark'})}>☾&nbsp; Dark</button></div></div><div className="preference-row"><div><strong>Language</strong><small>Choose the primary language for the interface.</small></div><select value={settings.language} onChange={e=>updateSettings({...settings,language:e.target.value})}><option>English (US)</option><option>English (UK)</option></select></div></SettingsSection>}{tab==='Integrations'&&<SettingsSection title="Integrations"><div className="integration-grid"><IntegrationCard name="Google Sheets" color="green" onAction={()=>notify('Ask your administrator to configure the server credentials')}/><IntegrationCard name="Microsoft Excel" color="gray" onAction={()=>notify('Excel sync requires Microsoft Graph credentials on the server')}/></div><div className="privacy-callout"><strong>Private server-side connection</strong><span>No sheet URL, credentials, sheet data, or encryption keys are exposed in this website.</span></div></SettingsSection>}</div></div></div>}
+function SettingsPage({user,settings,updateSettings,updateProfile,notify,logout}){
+ const [tab,setTab]=useState('Profile Settings'),[draft,setDraft]=useState(user),[status,setStatus]=useState({googleSheets:{configured:false},supabase:{configured:false}});
+ useEffect(()=>{
+  fetch('/api/integrations/status').then(res=>res.json()).then(data=>{
+   if(data.ok) setStatus(data);
+  }).catch(()=>{});
+ },[]);
+
+ return <div className="settings-page"><div className="settings-layout"><aside className="settings-tabs"><button className={tab==='Profile Settings'?'selected':''} onClick={()=>setTab('Profile Settings')}>Profile Settings</button><button className={tab==='App Preferences'?'selected':''} onClick={()=>setTab('App Preferences')}>App Preferences</button><button className={tab==='Integrations'?'selected':''} onClick={()=>setTab('Integrations')}>Integrations</button></aside><div className="settings-main">{tab==='Profile Settings'&&<SettingsSection title="Profile Settings"><div className="profile-form"><div><div className="profile-photo">{initials(draft.name)}</div><button className="text-button" onClick={()=>notify('Profile pictures are not enabled yet')}>Change Picture</button></div><div className="grid"><Field label="Full name"><Input value={draft.name} onChange={value=>setDraft({...draft,name:value})}/></Field><Field label="Email address"><Input value={draft.email} onChange={value=>setDraft({...draft,email:value})} type="email"/></Field></div></div><div className="settings-actions"><button className="primary" onClick={()=>updateProfile(draft)}>Save Changes</button></div></SettingsSection>}{tab==='App Preferences'&&<SettingsSection title="App Preferences"><div className="preference-row"><div><strong>Theme</strong><small>Select your preferred interface color mode.</small></div><div className="segmented"><button className={settings.theme==='Light'?'selected':''} onClick={()=>updateSettings({...settings,theme:'Light'})}>☼&nbsp; Light</button><button className={settings.theme==='Dark'?'selected':''} onClick={()=>updateSettings({...settings,theme:'Dark'})}>☾&nbsp; Dark</button></div></div><div className="preference-row"><div><strong>Language</strong><small>Choose the primary language for the interface.</small></div><select value={settings.language} onChange={e=>updateSettings({...settings,language:e.target.value})}><option>English (US)</option><option>English (UK)</option></select></div></SettingsSection>}{tab==='Integrations'&&<SettingsSection title="Integrations"><div className="integration-grid">
+  <IntegrationCard name="Google Sheets" color="green" configured={status.googleSheets?.configured} details={status.googleSheets?.configured?`Connected (Sheet: ${status.googleSheets.sheetId})`:'Set GOOGLE_SHEET_ID & GOOGLE_SERVICE_ACCOUNT_JSON in .env'} onAction={()=>notify(status.googleSheets?.configured?'Google Sheets sync is operational':'Add GOOGLE_SHEET_ID to your .env file')}/>
+  <IntegrationCard name="Supabase DB" color="green" configured={status.supabase?.configured} details={status.supabase?.configured?'Connected':'Set VITE_SUPABASE_* & SUPABASE_* in .env'} onAction={()=>notify(status.supabase?.configured?'Supabase sync is operational':'Add Supabase keys to your .env.local file')}/>
+ </div><div className="privacy-callout"><strong>Private server-side connection</strong><span>All integrations run securely through your backend server. Local storage keeps your logs safe even if third-party APIs are offline.</span></div></SettingsSection>}<div className="settings-logout"><button onClick={logout}><LogOut size={16}/> Log out</button></div></div></div></div>
+}
 function SettingsSection({title,children}){return <section className="settings-section"><h2>{title}</h2>{children}</section>}
-function IntegrationCard({name,color,onAction}){return <div className={'integration-card '+color}><div className="integration-card-top"><span className="sheet-icon">▦</span><strong>{name}</strong><em>● Not connected</em></div><p>Connect this provider through a private backend. The browser never receives tokens or sheet contents.</p><button className="secondary" onClick={onAction}>Connect securely</button></div>}
+function IntegrationCard({name,color,configured,details,onAction}){return <div className={'integration-card '+(configured?color:'gray')}><div className="integration-card-top"><span className="sheet-icon">▦</span><strong>{name}</strong><em>{configured?'● Connected':'○ Not configured'}</em></div><p>{details}</p><button className="secondary" onClick={onAction}>{configured?'Status Info':'Setup Guide'}</button></div>}
 createRoot(document.getElementById('root')).render(<App/>);
+
