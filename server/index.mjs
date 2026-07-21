@@ -47,6 +47,14 @@ async function googleToken() {
 function row(entry) { return [entry.type==='Creator'?'Creator':'Brand',entry.name,entry.platform||entry.website,entry.handle||entry.industry,entry.niche||entry.poc,entry.audience||entry.designation,`${entry.country?.code||''} ${entry.phone||''}`.trim(),entry.email,entry.connected,entry.reachedBy,entry.date,entry.response,entry.responseNotes,entry.follow,entry.followDate,entry.followNotes,entry.nextAction,entry.remarks,new Date().toISOString()]; }
 async function appendToSheet(entry) { const token=await googleToken(); const tab=entry.type==='Brand'?'Brands':'Creators'; const response=await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(tab)}!A:Z:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({values:[row(entry)]})}); if(!response.ok) { const details=await response.text(); const error=new Error(`Spreadsheet rejected the row${details?`: ${details.slice(0,240)}`:''}`); error.status=502; throw error; } }
 async function saveToSupabase(entry,userId) { if(!supabaseUrl||!supabaseServiceKey)return; const response=await fetch(`${supabaseUrl}/rest/v1/outreach_entries`,{method:'POST',headers:{apikey:supabaseServiceKey,authorization:`Bearer ${supabaseServiceKey}`,'content-type':'application/json',prefer:'return=minimal'},body:JSON.stringify({user_id:userId,type:entry.type,payload:entry,created_at:new Date().toISOString()})}); if(!response.ok){const details=await response.text();throw new Error(`Supabase row save failed${details?`: ${details.slice(0,200)}`:''}`)} }
+async function appendToExcelCsv(entry) {
+  const excelCsvFile = path.join(dataDir, 'outreach_export.csv');
+  const headers = 'Type,Name,Platform/Website,Handle/Industry,Niche/POC,Audience/Designation,Phone,Email,Connected Via,Reached Out By,Date,Response Status,Response Notes,Follow Needed,Follow Date,Follow Notes,Next Action,Remarks,Logged At\n';
+  let exists = false;
+  try { await fs.access(excelCsvFile); exists = true; } catch {}
+  const values = row(entry).map(v => `"${String(v || '').replaceAll('"', '""')}"`).join(',');
+  await fs.appendFile(excelCsvFile, (exists ? '' : headers) + values + '\n', 'utf8');
+}
 
 const server=http.createServer(async(req,res)=>{
   if(req.method==='OPTIONS'){res.writeHead(204,{'access-control-allow-origin':'http://127.0.0.1:5173','access-control-allow-methods':'POST,GET,PUT,OPTIONS','access-control-allow-headers':'content-type','access-control-allow-credentials':'true'});return res.end();}
@@ -62,6 +70,13 @@ const server=http.createServer(async(req,res)=>{
     if(req.url==='/api/settings'&&req.method==='PUT'){const data=await requestBody(req);store.settings[user.id]={theme:data.theme==='Dark'?'Dark':'Light',language:['English (US)','English (UK)'].includes(data.language)?data.language:'English (US)'};await saveStore();return json(res,200,{ok:true,settings:store.settings[user.id]});}
     if(req.url==='/api/profile'&&req.method==='PUT'){const data=await requestBody(req);user.name=String(data.name||'').trim().slice(0,120);user.email=String(data.email||'').trim().toLowerCase();if(user.name.length<2||!user.email.includes('@'))return json(res,400,{ok:false,error:'Enter a valid name and email'});await saveStore();return json(res,200,{ok:true,user:safeUser(user)});}
     if(req.url==='/api/entries'&&req.method==='GET')return json(res,200,{ok:true,entries:store.entries.filter(entry=>entry.userId===user.id).slice(-100).reverse()});
+    if(req.url==='/api/export/excel'&&req.method==='GET'){
+      const userEntries = store.entries.filter(entry=>entry.userId===user.id);
+      const headers = 'Type,Name,Platform/Website,Handle/Industry,Niche/POC,Audience/Designation,Phone,Email,Connected Via,Reached Out By,Date,Response Status,Response Notes,Follow Needed,Follow Date,Follow Notes,Next Action,Remarks,Logged At\n';
+      const rows = userEntries.map(e => row(e).map(v => `"${String(v || '').replaceAll('"', '""')}"`).join(',')).join('\n');
+      res.writeHead(200, { 'content-type': 'text/csv', 'content-disposition': 'attachment; filename="outreach_clients.csv"' });
+      return res.end(headers + rows);
+    }
     if(req.url==='/api/entries'&&req.method==='POST'){
       const entry=await requestBody(req);
       if(entry.type==='Creator'&&(!String(entry.name||'').trim()||!String(entry.handle||'').trim())) return json(res,400,{ok:false,error:'Creator name and Instagram ID are required'});
@@ -69,6 +84,7 @@ const server=http.createServer(async(req,res)=>{
       let sheetSynced = false, supabaseSynced = false, syncWarnings = [];
       try { await appendToSheet(entry); sheetSynced = true; } catch (err) { console.error('Sheet sync notice:', err.message); syncWarnings.push(err.message); }
       try { await saveToSupabase(entry, user.id); supabaseSynced = true; } catch (err) { console.error('Supabase sync notice:', err.message); syncWarnings.push(err.message); }
+      try { await appendToExcelCsv(entry); } catch (err) { console.error('Excel CSV notice:', err.message); }
       
       const saved={...entry,id:crypto.randomUUID(),userId:user.id,createdAt:new Date().toISOString(),sheetSynced,supabaseSynced};
       store.entries.push(saved);

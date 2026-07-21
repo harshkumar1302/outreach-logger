@@ -114,7 +114,7 @@ function Auth({onAuthenticated}){
      }else if(data.error){
       throw new Error(data.error);
      }else{
-      throw new Error('Server returned an unexpected response');
+      throw new Error(mode==='signup'?'Could not create account. Check your email and password format.':'Incorrect email or password.');
      }
     }catch(serverErr){
      let msg=serverErr.message||sbErr?.message||'Email or password is incorrect';
