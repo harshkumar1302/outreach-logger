@@ -7,9 +7,6 @@ create table if not exists public.outreach_entries (
   updated_at timestamptz not null default now()
 );
 
-alter table public.outreach_entries
-  add column if not exists updated_at timestamptz not null default now();
-
 alter table public.outreach_entries enable row level security;
 
 drop policy if exists "Users can read their own outreach entries" on public.outreach_entries;

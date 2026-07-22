@@ -112,11 +112,11 @@ function googleConfigured() {
 }
 
 function supabaseConfigured() {
-  return Boolean(supabaseUrl && supabaseKey && !supabaseUrl.includes('your-project') && !supabaseKey.includes('replace_me'));
+  return Boolean(supabaseUrl && supabaseKey);
 }
 
 function supabaseServerConfigured() {
-  return Boolean(supabaseUrl && supabaseKey && supabaseSecretKey && !supabaseSecretKey.includes('replace_with'));
+  return Boolean(supabaseUrl && supabaseKey && supabaseSecretKey);
 }
 
 function webRequestFromNode(req) {
@@ -135,7 +135,7 @@ async function currentUser(req) {
       const envOverrides = {
         url: supabaseUrl,
         publishableKeys: { default: supabaseKey },
-        secretKeys: supabaseServerConfigured() ? { default: supabaseSecretKey } : {},
+        secretKeys: supabaseSecretKey ? { default: supabaseSecretKey } : {},
         jwks: supabaseJwksUrl ? new URL(supabaseJwksUrl) : null
       };
       const { data: ctx, error } = await createSupabaseContext(webRequestFromNode(req), {
@@ -383,7 +383,7 @@ async function fetchFromSupabase(userId) {
 
 async function saveToSupabase(entry, userId) {
   if (!supabaseServerConfigured()) return false;
-  const response = await fetch(`${supabaseUrl}/rest/v1/outreach_entries?on_conflict=id`, {
+  const response = await fetch(`${supabaseUrl}/rest/v1/outreach_entries`, {
     method: 'POST',
     headers: {
       apikey: supabaseSecretKey,
