@@ -19,7 +19,10 @@ import {
   X,
   LogOut,
   Pencil,
-  Trash2
+  Trash2,
+  Download,
+  RefreshCw,
+  FileJson
 } from 'lucide-react';
 import { supabase, supabaseConfigured } from './lib/supabase';
 import './styles.css';
@@ -496,8 +499,8 @@ function App() {
     <div className={'shell theme-' + settings.theme.toLowerCase()}>
       <aside className={'sidebar ' + (navOpen ? 'open' : '')}>
         <div className="brand">
-          <div className="mark">
-            <Sparkles size={20} />
+          <div className="mark" style={{ background: 'transparent', boxShadow: 'none' }}>
+            <img src="/favicon.svg" alt="Creonnect" style={{ width: '42px', height: '42px', borderRadius: '12px', boxShadow: '0 4px 16px var(--accent-glow)' }} />
           </div>
           <div>
             <b>Creonnect</b>
@@ -531,7 +534,7 @@ function App() {
           <button className="menu" onClick={() => setNavOpen(true)}>
             <Menu />
           </button>
-          <div>
+          <div className="header-text">
             <p className="eyebrow">{page.toUpperCase()}</p>
             <h1>{page === 'Outreach' ? 'Log new outreach' : page}</h1>
             <p className="sub">
@@ -544,10 +547,11 @@ function App() {
                 : 'Manage your account preferences and integrations.'}
             </p>
           </div>
+
           <div className="header-actions">
             {page === 'Dashboard' && (
               <button className="primary top-add" onClick={() => go('Outreach')}>
-                <Plus size={17} /> New Log
+                <Plus size={17} /> <span className="hide-mobile">New Log</span>
               </button>
             )}
           </div>
@@ -585,6 +589,14 @@ function App() {
           )}
         </section>
       </main>
+      <nav className="bottom-nav">
+        {nav.map(([name, Icon]) => (
+          <button key={name} className={page === name ? 'active' : ''} onClick={() => go(name)}>
+            <Icon size={20} />
+            <span>{name}</span>
+          </button>
+        ))}
+      </nav>
       <Notice message={notice} error={noticeError} />
     </div>
   );
@@ -732,8 +744,8 @@ function Auth({ onAuthenticated }) {
           </button>
         </div>
         <div className="auth-logo">
-          <div className="mark">
-            <ShieldCheck size={22} />
+          <div className="mark" style={{ background: 'transparent', boxShadow: 'none' }}>
+            <img src="/favicon.svg" alt="Creonnect" style={{ width: '100%', height: '100%', borderRadius: '12px', boxShadow: '0 4px 16px var(--accent-glow)' }} />
           </div>
           <h1>Creonnect</h1>
           <p>Outreach Logger</p>
@@ -1081,17 +1093,14 @@ function Dashboard({ entries, onAdd, onEdit, onDelete, onSync }) {
         <div className="panel-head">
           <h2>Outreach List</h2>
           <div className="panel-actions">
-            <button className="secondary" onClick={onSync}>
-              Sync Sheets
+            <button className="secondary icon-btn" title="Sync Sheets" onClick={onSync}>
+              <RefreshCw size={16} /> <span className="hide-mobile">Sync</span>
             </button>
-            <button className="secondary" onClick={() => downloadCsv(entries)}>
-              CSV &darr;
+            <button className="secondary icon-btn" title="Download CSV" onClick={() => downloadCsv(entries)}>
+              <Download size={16} /> <span className="hide-mobile">CSV</span>
             </button>
-            <button className="secondary" onClick={() => downloadJson(entries)}>
-              JSON &darr;
-            </button>
-            <button className="primary" onClick={onAdd}>
-              New log <Plus size={15} />
+            <button className="secondary icon-btn" title="Download JSON" onClick={() => downloadJson(entries)}>
+              <FileJson size={16} /> <span className="hide-mobile">JSON</span>
             </button>
           </div>
         </div>
@@ -1110,18 +1119,18 @@ function Dashboard({ entries, onAdd, onEdit, onDelete, onSync }) {
               </div>
               {paginated.map((entry, index) => (
                 <div className="row" key={entry.id || index}>
-                  <span>{(page - 1) * itemsPerPage + index + 1}</span>
-                  <b>{entry.reachedBy || '—'}</b>
-                  <b style={{ color: 'var(--text-accent)' }}>{entry.name || 'Unnamed'}</b>
-                  <span>{new Date(entry.date || entry.createdAt).toLocaleDateString()}</span>
-                  <em className={
+                  <span data-label="#">{(page - 1) * itemsPerPage + index + 1}</span>
+                  <b data-label="Reached By">{entry.reachedBy || '—'}</b>
+                  <b data-label="Name" style={{ color: 'var(--text-accent)' }}>{entry.name || 'Unnamed'}</b>
+                  <span data-label="Date">{new Date(entry.date || entry.createdAt).toLocaleDateString()}</span>
+                  <em data-label="Response" className={
                     entry.response === 'Converted' || entry.response === 'Interested' ? 'badge-success' :
                     entry.response === 'Follow-up Needed' || entry.response === 'On Hold' ? 'badge-warning' :
                     entry.response === 'No Response' || entry.response === 'Not Contacted' ? 'badge-neutral' :
                     'badge-danger'
                   }>{entry.response}</em>
-                  <span className={entry.follow === 'Yes' ? 'text-highlight' : ''}>{entry.follow}</span>
-                  <span>{entry.connected || '—'}</span>
+                  <span data-label="Follow Up" className={entry.follow === 'Yes' ? 'text-highlight' : ''}>{entry.follow}</span>
+                  <span data-label="Connected Via">{entry.connected || '—'}</span>
                   <div className="row-actions">
                     <button title="Edit log" onClick={() => onEdit(entry)}>
                       <Pencil size={15} />
