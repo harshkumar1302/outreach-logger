@@ -1240,50 +1240,58 @@ header h1 {
   .table-header { display: none !important; }
   .manage-table .row { 
     display: flex; 
-    flex-direction: column; 
+    flex-direction: row; 
+    flex-wrap: wrap;
+    align-items: center;
     gap: 12px; 
     padding: 16px; 
     border: 1px solid var(--border-light); 
     border-radius: 12px; 
     margin-bottom: 12px; 
     background: var(--bg-card); 
-    min-width: 0;
   }
-  .manage-table .row > * { 
-    text-align: left; 
-    justify-self: auto; 
-    width: 100%; 
-    display: flex; 
-    align-items: center; 
-    justify-content: space-between; 
+  
+  /* Hide #, Reached By, Follow Up, Connected Via on mobile for a clean single-row look */
+  .manage-table .row > *:nth-child(1),
+  .manage-table .row > *:nth-child(2),
+  .manage-table .row > *:nth-child(6),
+  .manage-table .row > *:nth-child(7) {
+    display: none !important;
   }
-  .manage-table .row > *::before { 
-    content: attr(data-label); 
-    font-size: 11px; 
+
+  /* Name */
+  .manage-table .row > *:nth-child(3) { 
+    flex: 1 1 auto; 
+    font-size: 15px; 
+  }
+  
+  /* Date */
+  .manage-table .row > *:nth-child(4) { 
+    font-size: 13px; 
     color: var(--text-muted); 
-    font-weight: 700; 
-    text-transform: uppercase; 
-    margin-right: 12px;
+    margin-right: auto;
   }
-  .manage-table .row > em { 
-    width: auto; 
-    align-self: flex-start; 
-    margin-top: 4px; 
-    margin-bottom: 4px; 
+  
+  /* Response Badge */
+  .manage-table .row > *:nth-child(5) { 
+    margin: 0; 
   }
+
+  /* Actions */
   .row-actions { 
     opacity: 1; 
     transform: none; 
-    justify-content: flex-end; 
     width: 100%; 
     border-top: 1px solid var(--border-light); 
-    padding-top: 16px; 
-    margin-top: 4px; 
+    padding-top: 12px; 
+    margin-top: 4px;
+    justify-content: flex-end; 
   }
-  .row-actions::before { display: none !important; }
   
-  .panel-actions { display: flex; gap: 8px; }
-  .icon-btn { padding: 10px; border-radius: 8px; }
+  .manage-table .row > *::before { display: none !important; }
+  
+  .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .icon-btn { padding: 10px; border-radius: 8px; flex: 1; justify-content: center; }
   .phone { grid-template-columns: 90px 1fr; }
   .analytics-toolbar { flex-direction: column; align-items: flex-start; gap: 16px; }
   .range-button { width: 100%; justify-content: center; }
